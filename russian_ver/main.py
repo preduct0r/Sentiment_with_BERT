@@ -119,14 +119,8 @@ if __name__ == '__main__':
     # Tell pytorch to run this model on the GPU.
     # model.cuda()
 
-    # Number of training epochs. The BERT authors recommend between 2 and 4.
-    # We chose to run for 4, but we'll see later that this may be over-fitting the
-    # training data.
-    epochs = 4
 
-    # Total number of training steps is [number of batches] x [number of epochs].
-    # (Note that this is not the same as the number of training samples).
-    total_steps = len(train_dataloader) * epochs
+
 
 
     # This training code is based on the `run_glue.py` script here:
@@ -161,7 +155,18 @@ if __name__ == '__main__':
         print('No GPU available, using the CPU instead.')
         device = torch.device("cpu")
 
+    # Number of training epochs. The BERT authors recommend between 2 and 4.
+    # We chose to run for 4, but we'll see later that this may be over-fitting the
+    # training data.
+    epochs=4
+
+    # Total number of training steps is [number of batches] x [number of epochs].
+    # (Note that this is not the same as the number of training samples).
+    total_steps = len(train_dataloader) * epochs
+
+
     # For each epoch...
+
     for epoch_i in range(0, epochs):
 
         # ========================================
@@ -206,11 +211,9 @@ if __name__ == '__main__':
             #   [0]: input ids
             #   [1]: attention masks
             #   [2]: labels
-            b_input = dict()
-            b_input['input_ids'] = batch[0]
-            b_input['attention_mask'] = batch[1]
 
             b_labels = batch[2]
+            in_features = [InputFeatures(input_ids=i.unsqueeze(dim=0), attention_mask=j.unsqueeze(dim=0)) for i,j in zip(batch[0], batch[1])]
 
             # Always clear any previously calculated gradients before performing a
             # backward pass. PyTorch doesn't do this automatically because
@@ -224,7 +227,8 @@ if __name__ == '__main__':
             # arge given and what flags are set. For our useage here, it returns
             # the loss (because we provided labels) and the "logits"--the model
             # outputs prior to activation.
-            outputs = model.train_on_batch(InputFeatures(b_input), b_labels)
+
+            outputs = model.train_on_batch(in_features, b_labels)
 
 
         # Measure how long this epoch took.
@@ -245,11 +249,9 @@ if __name__ == '__main__':
 
         # Put the model in evaluation mode--the dropout layers behave differently
         # during evaluation.
-        model.eval()
 
         # Tracking variables
-        total_eval_accuracy = 0
-        total_eval_loss = 0
+        total_eval_accuracy = 0.
         nb_eval_steps = 0
 
         # Evaluate data for one epoch
@@ -263,56 +265,37 @@ if __name__ == '__main__':
             #   [0]: input ids
             #   [1]: attention masks
             #   [2]: labels
-            b_input_ids = batch[0].to(device)
-            b_input_mask = batch[1].to(device)
-            b_labels = batch[2].to(device)
+            b_labels = batch[2]
+            in_features = [InputFeatures(input_ids=i.unsqueeze(dim=0), attention_mask=j.unsqueeze(dim=0)) for i, j in
+                           zip(batch[0], batch[1])]
 
-            # Tell pytorch not to bother with constructing the compute graph during
-            # the forward pass, since this is only needed for backprop (training).
-            with torch.no_grad():
-                # Forward pass, calculate logit predictions.
-                # token_type_ids is the same as the "segment ids", which
-                # differentiates sentence 1 and 2 in 2-sentence tasks.
-                # The documentation for this `model` function is here:
-                # https://huggingface.co/transformers/v2.2.0/model_doc/bert.html#transformers.BertForSequenceClassification
-                # Get the "logits" output by the model. The "logits" are the output
-                # values prior to applying an activation function like the softmax.
-                outputs = model(b_input_ids,
-                                token_type_ids=None,
-                                attention_mask=b_input_mask,
-                                labels=b_labels)
-                loss, logits = outputs.loss, outputs.logits
+            pred = model(in_features)
 
-            # Accumulate the validation loss.
-            total_eval_loss += loss.item()
+
+            total_eval_accuracy += float((torch.sum(torch.tensor(pred) == b_labels)/ len(b_labels)).cpu().numpy())
 
             # Move logits and labels to CPU
-            logits = logits.detach().cpu().numpy()
-            label_ids = b_labels.to('cpu').numpy()
+            # logits = logits.detach().cpu().numpy()
+            # label_ids = b_labels.to('cpu').numpy()
 
             # Calculate the accuracy for this batch of test sentences, and
             # accumulate it over all batches.
-            total_eval_accuracy += flat_accuracy(logits, label_ids)
+            # total_eval_accuracy += flat_accuracy(logits, label_ids)
 
         # Report the final accuracy for this validation run.
         avg_val_accuracy = total_eval_accuracy / len(validation_dataloader)
         print("  Accuracy: {0:.2f}".format(avg_val_accuracy))
 
-        # Calculate the average loss over all of the batches.
-        avg_val_loss = total_eval_loss / len(validation_dataloader)
 
         # Measure how long the validation run took.
         validation_time = format_time(time.time() - t0)
 
-        print("  Validation Loss: {0:.2f}".format(avg_val_loss))
         print("  Validation took: {:}".format(validation_time))
 
         # Record all statistics from this epoch.
         training_stats.append(
             {
                 'epoch': epoch_i + 1,
-                'Training Loss': avg_train_loss,
-                'Valid. Loss': avg_val_loss,
                 'Valid. Accur.': avg_val_accuracy,
                 'Training Time': training_time,
                 'Validation Time': validation_time
